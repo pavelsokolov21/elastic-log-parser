@@ -1,108 +1,145 @@
 export class ElasticLogParser {
   #bracketsPairs = [];
+  #runtimeBracketsPairs = [];
+  #initialStr = "";
 
   /**
    * Основной метод для парсинга строки в JSON.
    */
-  parseObj(str) {
+  parseObjStr(str) {
+    this._reset();
+
     try {
-      return this._parseObj(str);
+      this._setInitialStr(str);
+      return this._parseObjByStr(str);
     } catch (err) {
+      console.log(err);
       console.error("Invalid str");
     }
   }
 
-  _iterateStr(str) {
-    function iterateByRange(range) {
-      const [initStart, initEnd] = range;
-      const acc = {};
+  _reset() {
+    this._setBracketsPairs([]);
+    this._setRuntimeBracketsPairs([]);
+    this._setInitialStr("");
+  }
 
-      let needFindKey = true;
-      let key = "";
-      let value = "";
+  _setInitialStr(str) {
+    this.#initialStr = str;
+  }
 
-      for (let charIdx = initStart + 1; charIdx < initEnd; charIdx++) {
-        const char = str[charIdx];
+  _setBracketsPairs(pairs) {
+    this.#bracketsPairs = pairs;
+  }
 
-        if (char === "[") {
-          const range = this.#bracketsPairs.pop();
-          const { subArr, shiftIdx } = this._parseArray(
-            str,
-            range,
-            iterateByRange.bind(this)
-          );
+  _setRuntimeBracketsPairs(pairs) {
+    this.#runtimeBracketsPairs = pairs;
+  }
 
-          acc[key.trim()] = subArr;
+  _pushRuntimeBracketPair(pair) {
+    this.#runtimeBracketsPairs.push(pair);
+  }
 
-          key = "";
-          value = "";
-          needFindKey = true;
-          charIdx = shiftIdx;
+  _getLastRuntimeBracket() {
+    const lastEl =
+      this.#runtimeBracketsPairs[this.#runtimeBracketsPairs.length - 1];
 
-          continue;
-        }
+    return lastEl;
+  }
 
-        if (char === "{") {
-          const range = this.#bracketsPairs.pop();
-          const [, end] = range;
-          const subObj = iterateByRange.call(this, range);
+  _removeLastBrackets() {
+    const deletedPairs = this.#bracketsPairs.pop();
 
-          acc[key.trim()] = subObj;
+    this._pushRuntimeBracketPair(deletedPairs);
+  }
 
-          key = "";
-          value = "";
-          needFindKey = true;
-          charIdx = end;
+  _removeLastBracketsAndReturn() {
+    this._removeLastBrackets();
 
-          continue;
-        }
+    return this._getLastRuntimeBracket();
+  }
 
-        if (char === "," || charIdx === initEnd - 1) {
-          if (char !== ",") {
-            value += char;
-          }
+  _parseObj() {
+    const [initStart, initEnd] = this._getLastRuntimeBracket();
+    const acc = {};
 
-          needFindKey = true;
+    let needFindKey = true;
+    let key = "";
+    let value = "";
 
-          acc[key.trim()] = this._parsePrimitive(value);
+    for (let charIdx = initStart + 1; charIdx < initEnd; charIdx++) {
+      const char = this.#initialStr[charIdx];
 
-          key = "";
-          value = "";
+      if (char === "[") {
+        this._removeLastBrackets();
+        const { subArr, shiftIdx } = this._parseArray();
 
-          continue;
-        }
+        acc[key.trim()] = subArr;
 
-        if (char === "=") {
-          needFindKey = false;
+        key = "";
+        value = "";
+        needFindKey = true;
+        charIdx = shiftIdx;
 
-          continue;
-        }
-
-        if (needFindKey) {
-          key += char;
-        } else {
-          value += char;
-        }
+        continue;
       }
 
-      return acc;
+      if (char === "{") {
+        const [, end] = this._removeLastBracketsAndReturn();
+        const subObj = this._parseObj();
+
+        acc[key.trim()] = subObj;
+
+        key = "";
+        value = "";
+        needFindKey = true;
+        charIdx = end;
+
+        continue;
+      }
+
+      if (char === "," || charIdx === initEnd - 1) {
+        if (char !== ",") {
+          value += char;
+        }
+
+        needFindKey = true;
+
+        acc[key.trim()] = this._parsePrimitive(value);
+
+        key = "";
+        value = "";
+
+        continue;
+      }
+
+      if (char === "=") {
+        needFindKey = false;
+
+        continue;
+      }
+
+      if (needFindKey) {
+        key += char;
+      } else {
+        value += char;
+      }
     }
 
-    return iterateByRange.bind(this);
+    return acc;
   }
 
   /**
    * Внутренний метод для парсинга строки в JSON.
    */
-  _parseObj(str) {
-    this.#bracketsPairs = this._getBracketsPairsIdxs(str).sort(
-      (a, b) => b[0] - a[0]
+  _parseObjByStr(str) {
+    this._setBracketsPairs(
+      this._getBracketsPairsIdxs(str).sort((a, b) => b[0] - a[0])
     );
 
-    const range = this.#bracketsPairs.pop();
-    const iterateByRange = this._iterateStr(str);
+    const range = this._removeLastBracketsAndReturn();
 
-    return iterateByRange(range);
+    return this._parseObj(range);
   }
 
   /**
@@ -110,21 +147,18 @@ export class ElasticLogParser {
    * TODO: Сделать над ним обертку, чтобы можно было использовать
    * вне parseObj
    */
-  _parseArray(str, [initStart, initEnd], objParser) {
+  _parseArray() {
+    const [initStart, initEnd] = this._getLastRuntimeBracket();
     const subArr = [];
     let item = "";
     let shiftIdx = initEnd;
 
     for (let i = initStart + 1; i < initEnd; i++) {
-      const char = str[i];
+      const char = this.#initialStr[i];
 
       if (char === "[") {
-        const range = this.#bracketsPairs.pop();
-        const { subArr: deepArr, shiftIdx } = this._parseArray(
-          str,
-          range,
-          objParser
-        );
+        this._removeLastBrackets();
+        const { subArr: deepArr, shiftIdx } = this._parseArray();
 
         item = deepArr;
         subArr.push(item);
@@ -135,10 +169,9 @@ export class ElasticLogParser {
       }
 
       if (char === "{") {
-        const range = this.#bracketsPairs.pop();
-        const [, end] = range;
+        const [, end] = this._removeLastBracketsAndReturn();
 
-        item = objParser(range);
+        item = this._parseObj();
         subArr.push(item);
         i = end;
         item = "";
