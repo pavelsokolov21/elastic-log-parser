@@ -71,15 +71,15 @@ export class ElasticLogParser {
       const char = this.#initialStr[charIdx];
 
       if (char === "[") {
-        this._removeLastBrackets();
-        const { subArr, shiftIdx } = this._parseArray();
+        const [, end] = this._removeLastBracketsAndReturn();
+        const subArr = this._parseArray();
 
         acc[key.trim()] = subArr;
 
         key = "";
         value = "";
         needFindKey = true;
-        charIdx = shiftIdx;
+        charIdx = end;
 
         continue;
       }
@@ -151,14 +151,13 @@ export class ElasticLogParser {
     const [initStart, initEnd] = this._getLastRuntimeBracket();
     const subArr = [];
     let item = "";
-    let shiftIdx = initEnd;
 
     for (let i = initStart + 1; i < initEnd; i++) {
       const char = this.#initialStr[i];
 
       if (char === "[") {
-        this._removeLastBrackets();
-        const { subArr: deepArr, shiftIdx } = this._parseArray();
+        const [, shiftIdx] = this._removeLastBracketsAndReturn();
+        const deepArr = this._parseArray();
 
         item = deepArr;
         subArr.push(item);
@@ -195,7 +194,7 @@ export class ElasticLogParser {
       item += char;
     }
 
-    return { subArr, shiftIdx };
+    return subArr;
   }
 
   /**
