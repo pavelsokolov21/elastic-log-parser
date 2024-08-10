@@ -30,7 +30,7 @@ describe("parseObj", () => {
     ["{account=true}", { account: true }],
     ["{account=false}", { account: false }],
   ])("should parse string to JSON %#", (data, expected) => {
-    const result = elasticParser.parseObj(data);
+    const result = elasticParser.parseObjStr(data);
 
     expect(result).toEqual(expected);
   });

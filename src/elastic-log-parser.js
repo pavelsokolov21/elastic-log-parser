@@ -1,102 +1,176 @@
+import {
+  pipe,
+  eq,
+  setObjPropertyWithKeyTransformer,
+  mutateObj,
+  trim,
+  pick,
+} from "./utils/common";
+
+const isOpenSquareBracket = eq("[");
+const isOpenCurlyBracket = eq("{");
+const isComma = eq(",");
+const isEqualSign = eq("=");
+const mutateValue = mutateObj("value");
+const mutateKey = mutateObj("key");
+const mutateKeyToEmptyStr = mutateObj("key")("");
+const mutateValueToEmptyStr = mutateObj("value")("");
+const mutateNeedFindKeyToTrue = mutateObj("needFindKey")(true);
+const mutateNeedFindKeyToFalse = mutateObj("needFindKey")(false);
+const pickKey = pick("key");
+const pickValue = pick("value");
+const pickNeedFindKey = pick("needFindKey");
+
 export class ElasticLogParser {
+  #bracketsPairs = [];
+  #runtimeBracketsPairs = [];
+  #initialStr = "";
+
   /**
    * Основной метод для парсинга строки в JSON.
    */
-  parseObj(str) {
+  parseObjStr(str) {
+    this._reset();
+
     try {
-      return this._parseObj(str);
-    } catch {
+      this._setInitialStr(str);
+      return this._parseObjByStr(str);
+    } catch (err) {
+      console.log(err);
       console.error("Invalid str");
     }
+  }
+
+  _reset() {
+    this._setBracketsPairs([]);
+    this._setRuntimeBracketsPairs([]);
+    this._setInitialStr("");
+  }
+
+  _setInitialStr(str) {
+    this.#initialStr = str;
+  }
+
+  _setBracketsPairs(pairs) {
+    this.#bracketsPairs = pairs;
+  }
+
+  _setRuntimeBracketsPairs(pairs) {
+    this.#runtimeBracketsPairs = pairs;
+  }
+
+  _pushRuntimeBracketPair(pair) {
+    this.#runtimeBracketsPairs.push(pair);
+  }
+
+  _getLastRuntimeBracket() {
+    const lastEl =
+      this.#runtimeBracketsPairs[this.#runtimeBracketsPairs.length - 1];
+
+    return lastEl;
+  }
+
+  _removeLastBrackets() {
+    const deletedPairs = this.#bracketsPairs.pop();
+
+    this._pushRuntimeBracketPair(deletedPairs);
+  }
+
+  _removeLastBracketsAndReturn() {
+    this._removeLastBrackets();
+
+    return this._getLastRuntimeBracket();
+  }
+
+  _parseObj() {
+    const [initStart, initEnd] = this._getLastRuntimeBracket();
+    const acc = {};
+    const state = {
+      key: "",
+      value: "",
+      needFindKey: true,
+    };
+    const setObjValue = setObjPropertyWithKeyTransformer(acc)(trim);
+    const resetState = () =>
+      pipe([mutateKeyToEmptyStr, mutateValueToEmptyStr])(state);
+    const mutateNeedFindKeyToTrueWithState = () =>
+      mutateNeedFindKeyToTrue(state);
+    const mutateNeedFindKeyToFalseWithState = () =>
+      mutateNeedFindKeyToFalse(state);
+    const pickKeyWithState = () => pickKey(state);
+    const pickValueWithState = () => pickValue(state);
+    const pickNeedFindKeyWithState = () => pickNeedFindKey(state);
+
+    for (let charIdx = initStart + 1; charIdx < initEnd; charIdx++) {
+      const char = this.#initialStr[charIdx];
+
+      if (isOpenSquareBracket(char)) {
+        const [, end] = this._removeLastBracketsAndReturn();
+        const subArr = this._parseArray();
+
+        setObjValue(pickKeyWithState())(subArr);
+        resetState();
+        mutateNeedFindKeyToTrueWithState();
+
+        charIdx = end;
+
+        continue;
+      }
+
+      if (isOpenCurlyBracket(char)) {
+        const [, end] = this._removeLastBracketsAndReturn();
+        const subObj = this._parseObj();
+
+        setObjValue(pickKeyWithState())(subObj);
+        resetState();
+        mutateNeedFindKeyToTrueWithState();
+
+        charIdx = end;
+
+        continue;
+      }
+
+      if (isComma(char) || charIdx === initEnd - 1) {
+        if (!isComma(char)) {
+          mutateValue(pickValueWithState() + char)(state);
+        }
+
+        setObjValue(pickKeyWithState())(
+          this._parsePrimitive(pickValueWithState())
+        );
+        resetState();
+        mutateNeedFindKeyToTrueWithState();
+
+        continue;
+      }
+
+      if (isEqualSign(char)) {
+        mutateNeedFindKeyToFalseWithState();
+
+        continue;
+      }
+
+      if (pickNeedFindKeyWithState()) {
+        mutateKey(pickKeyWithState() + char)(state);
+      } else {
+        mutateValue(pickValueWithState() + char)(state);
+      }
+    }
+
+    return acc;
   }
 
   /**
    * Внутренний метод для парсинга строки в JSON.
    */
-  _parseObj(str) {
-    const bracketsPairs = this._getBracketsPairsIdxs(str).sort(
-      (a, b) => b[0] - a[0]
+  _parseObjByStr(str) {
+    this._setBracketsPairs(
+      this._getBracketsPairsIdxs(str).sort((a, b) => b[0] - a[0])
     );
 
-    const inner = (range) => {
-      const [initStart, initEnd] = range;
-      const acc = {};
+    const range = this._removeLastBracketsAndReturn();
 
-      let needFindKey = true;
-      let key = "";
-      let value = "";
-
-      for (let charIdx = initStart + 1; charIdx < initEnd; charIdx++) {
-        const char = str[charIdx];
-
-        if (char === "[") {
-          const range = bracketsPairs.pop();
-          const { subArr, shiftIdx } = this._parseArray(
-            str,
-            range,
-            bracketsPairs,
-            inner
-          );
-
-          acc[key.trim()] = subArr;
-
-          key = "";
-          value = "";
-          needFindKey = true;
-          charIdx = shiftIdx;
-
-          continue;
-        }
-
-        if (char === "{") {
-          const range = bracketsPairs.pop();
-          const [start, end] = range;
-          const subObj = inner(range);
-
-          acc[key.trim()] = subObj;
-
-          key = "";
-          value = "";
-          needFindKey = true;
-          charIdx = end;
-
-          continue;
-        }
-
-        if (char === "," || charIdx === initEnd - 1) {
-          if (char !== ",") {
-            value += char;
-          }
-
-          needFindKey = true;
-
-          acc[key.trim()] = this._parsePrimitive(value);
-
-          key = "";
-          value = "";
-
-          continue;
-        }
-
-        if (char === "=") {
-          needFindKey = false;
-
-          continue;
-        }
-
-        if (needFindKey) {
-          key += char;
-        } else {
-          value += char;
-        }
-      }
-
-      return acc;
-    };
-
-    const range = bracketsPairs.pop();
-
-    return inner(range);
+    return this._parseObj(range);
   }
 
   /**
@@ -104,22 +178,17 @@ export class ElasticLogParser {
    * TODO: Сделать над ним обертку, чтобы можно было использовать
    * вне parseObj
    */
-  _parseArray(str, [initStart, initEnd], bracketsPairs, objParser) {
+  _parseArray() {
+    const [initStart, initEnd] = this._getLastRuntimeBracket();
     const subArr = [];
     let item = "";
-    let shiftIdx = initEnd;
 
     for (let i = initStart + 1; i < initEnd; i++) {
-      const char = str[i];
+      const char = this.#initialStr[i];
 
-      if (char === "[") {
-        const range = bracketsPairs.pop();
-        const { subArr: deepArr, shiftIdx } = this._parseArray(
-          str,
-          range,
-          bracketsPairs,
-          objParser
-        );
+      if (isOpenSquareBracket(char)) {
+        const [, shiftIdx] = this._removeLastBracketsAndReturn();
+        const deepArr = this._parseArray();
 
         item = deepArr;
         subArr.push(item);
@@ -129,11 +198,10 @@ export class ElasticLogParser {
         continue;
       }
 
-      if (char === "{") {
-        const range = bracketsPairs.pop();
-        const [, end] = range;
+      if (isOpenCurlyBracket(char)) {
+        const [, end] = this._removeLastBracketsAndReturn();
 
-        item = objParser(range);
+        item = this._parseObj();
         subArr.push(item);
         i = end;
         item = "";
@@ -141,8 +209,8 @@ export class ElasticLogParser {
         continue;
       }
 
-      if (char === "," || i === initEnd - 1) {
-        if (char !== ",") {
+      if (isComma(char) || i === initEnd - 1) {
+        if (!isComma(char)) {
           item += char;
         }
 
@@ -157,7 +225,7 @@ export class ElasticLogParser {
       item += char;
     }
 
-    return { subArr, shiftIdx };
+    return subArr;
   }
 
   /**
