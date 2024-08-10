@@ -1,3 +1,26 @@
+import {
+  pipe,
+  eq,
+  setObjPropertyWithKeyTransformer,
+  mutateObj,
+  trim,
+  pick,
+} from "./utils/common";
+
+const isOpenSquareBracket = eq("[");
+const isOpenCurlyBracket = eq("{");
+const isComma = eq(",");
+const isEqualSign = eq("=");
+const mutateValue = mutateObj("value");
+const mutateKey = mutateObj("key");
+const mutateKeyToEmptyStr = mutateObj("key")("");
+const mutateValueToEmptyStr = mutateObj("value")("");
+const mutateNeedFindKeyToTrue = mutateObj("needFindKey")(true);
+const mutateNeedFindKeyToFalse = mutateObj("needFindKey")(false);
+const pickKey = pick("key");
+const pickValue = pick("value");
+const pickNeedFindKey = pick("needFindKey");
+
 export class ElasticLogParser {
   #bracketsPairs = [];
   #runtimeBracketsPairs = [];
@@ -62,67 +85,75 @@ export class ElasticLogParser {
   _parseObj() {
     const [initStart, initEnd] = this._getLastRuntimeBracket();
     const acc = {};
-
-    let needFindKey = true;
-    let key = "";
-    let value = "";
+    const state = {
+      key: "",
+      value: "",
+      needFindKey: true,
+    };
+    const setObjValue = setObjPropertyWithKeyTransformer(acc)(trim);
+    const resetState = () =>
+      pipe([mutateKeyToEmptyStr, mutateValueToEmptyStr])(state);
+    const mutateNeedFindKeyToTrueWithState = () =>
+      mutateNeedFindKeyToTrue(state);
+    const mutateNeedFindKeyToFalseWithState = () =>
+      mutateNeedFindKeyToFalse(state);
+    const pickKeyWithState = () => pickKey(state);
+    const pickValueWithState = () => pickValue(state);
+    const pickNeedFindKeyWithState = () => pickNeedFindKey(state);
 
     for (let charIdx = initStart + 1; charIdx < initEnd; charIdx++) {
       const char = this.#initialStr[charIdx];
 
-      if (char === "[") {
+      if (isOpenSquareBracket(char)) {
         const [, end] = this._removeLastBracketsAndReturn();
         const subArr = this._parseArray();
 
-        acc[key.trim()] = subArr;
+        setObjValue(pickKeyWithState())(subArr);
+        resetState();
+        mutateNeedFindKeyToTrueWithState();
 
-        key = "";
-        value = "";
-        needFindKey = true;
         charIdx = end;
 
         continue;
       }
 
-      if (char === "{") {
+      if (isOpenCurlyBracket(char)) {
         const [, end] = this._removeLastBracketsAndReturn();
         const subObj = this._parseObj();
 
-        acc[key.trim()] = subObj;
+        setObjValue(pickKeyWithState())(subObj);
+        resetState();
+        mutateNeedFindKeyToTrueWithState();
 
-        key = "";
-        value = "";
-        needFindKey = true;
         charIdx = end;
 
         continue;
       }
 
-      if (char === "," || charIdx === initEnd - 1) {
-        if (char !== ",") {
-          value += char;
+      if (isComma(char) || charIdx === initEnd - 1) {
+        if (!isComma(char)) {
+          mutateValue(pickValueWithState() + char)(state);
         }
 
-        needFindKey = true;
-
-        acc[key.trim()] = this._parsePrimitive(value);
-
-        key = "";
-        value = "";
-
-        continue;
-      }
-
-      if (char === "=") {
-        needFindKey = false;
+        setObjValue(pickKeyWithState())(
+          this._parsePrimitive(pickValueWithState())
+        );
+        resetState();
+        mutateNeedFindKeyToTrueWithState();
 
         continue;
       }
 
-      if (needFindKey) {
-        key += char;
+      if (isEqualSign(char)) {
+        mutateNeedFindKeyToFalseWithState();
+
+        continue;
+      }
+
+      if (pickNeedFindKeyWithState()) {
+        mutateKey(pickKeyWithState() + char)(state);
       } else {
-        value += char;
+        mutateValue(pickValueWithState() + char)(state);
       }
     }
 
@@ -155,7 +186,7 @@ export class ElasticLogParser {
     for (let i = initStart + 1; i < initEnd; i++) {
       const char = this.#initialStr[i];
 
-      if (char === "[") {
+      if (isOpenSquareBracket(char)) {
         const [, shiftIdx] = this._removeLastBracketsAndReturn();
         const deepArr = this._parseArray();
 
@@ -167,7 +198,7 @@ export class ElasticLogParser {
         continue;
       }
 
-      if (char === "{") {
+      if (isOpenCurlyBracket(char)) {
         const [, end] = this._removeLastBracketsAndReturn();
 
         item = this._parseObj();
@@ -178,8 +209,8 @@ export class ElasticLogParser {
         continue;
       }
 
-      if (char === "," || i === initEnd - 1) {
-        if (char !== ",") {
+      if (isComma(char) || i === initEnd - 1) {
+        if (!isComma(char)) {
           item += char;
         }
 
