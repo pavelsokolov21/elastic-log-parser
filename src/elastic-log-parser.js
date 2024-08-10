@@ -1,24 +1,19 @@
 export class ElasticLogParser {
+  #bracketsPairs = [];
+
   /**
    * Основной метод для парсинга строки в JSON.
    */
   parseObj(str) {
     try {
       return this._parseObj(str);
-    } catch {
+    } catch (err) {
       console.error("Invalid str");
     }
   }
 
-  /**
-   * Внутренний метод для парсинга строки в JSON.
-   */
-  _parseObj(str) {
-    const bracketsPairs = this._getBracketsPairsIdxs(str).sort(
-      (a, b) => b[0] - a[0]
-    );
-
-    const inner = (range) => {
+  _iterateStr(str) {
+    function iterateByRange(range) {
       const [initStart, initEnd] = range;
       const acc = {};
 
@@ -30,12 +25,11 @@ export class ElasticLogParser {
         const char = str[charIdx];
 
         if (char === "[") {
-          const range = bracketsPairs.pop();
+          const range = this.#bracketsPairs.pop();
           const { subArr, shiftIdx } = this._parseArray(
             str,
             range,
-            bracketsPairs,
-            inner
+            iterateByRange.bind(this)
           );
 
           acc[key.trim()] = subArr;
@@ -49,9 +43,9 @@ export class ElasticLogParser {
         }
 
         if (char === "{") {
-          const range = bracketsPairs.pop();
-          const [start, end] = range;
-          const subObj = inner(range);
+          const range = this.#bracketsPairs.pop();
+          const [, end] = range;
+          const subObj = iterateByRange.call(this, range);
 
           acc[key.trim()] = subObj;
 
@@ -92,11 +86,23 @@ export class ElasticLogParser {
       }
 
       return acc;
-    };
+    }
 
-    const range = bracketsPairs.pop();
+    return iterateByRange.bind(this);
+  }
 
-    return inner(range);
+  /**
+   * Внутренний метод для парсинга строки в JSON.
+   */
+  _parseObj(str) {
+    this.#bracketsPairs = this._getBracketsPairsIdxs(str).sort(
+      (a, b) => b[0] - a[0]
+    );
+
+    const range = this.#bracketsPairs.pop();
+    const iterateByRange = this._iterateStr(str);
+
+    return iterateByRange(range);
   }
 
   /**
@@ -104,7 +110,7 @@ export class ElasticLogParser {
    * TODO: Сделать над ним обертку, чтобы можно было использовать
    * вне parseObj
    */
-  _parseArray(str, [initStart, initEnd], bracketsPairs, objParser) {
+  _parseArray(str, [initStart, initEnd], objParser) {
     const subArr = [];
     let item = "";
     let shiftIdx = initEnd;
@@ -113,11 +119,10 @@ export class ElasticLogParser {
       const char = str[i];
 
       if (char === "[") {
-        const range = bracketsPairs.pop();
+        const range = this.#bracketsPairs.pop();
         const { subArr: deepArr, shiftIdx } = this._parseArray(
           str,
           range,
-          bracketsPairs,
           objParser
         );
 
@@ -130,7 +135,7 @@ export class ElasticLogParser {
       }
 
       if (char === "{") {
-        const range = bracketsPairs.pop();
+        const range = this.#bracketsPairs.pop();
         const [, end] = range;
 
         item = objParser(range);
